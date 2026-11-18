@@ -1,6 +1,11 @@
 /**
  * Six phone IMU channels, in model order:
- * accelerometer X/Y/Z (g), gyroscope X/Y/Z (rad/s).
+ * accelerometer X/Y/Z (m/s²), gyroscope yaw/pitch/roll (rad/s).
+ *
+ * Storage note: the ring buffer keeps values in their raw Expo units
+ * (accelerometer in g, gyroscope in rad/s). The g→m/s² conversion and
+ * gyro axis remap are applied at inference time in speedModel.ts so the
+ * CSV recordings stay in the original sensor units.
  */
 export const MOTION_CHANNEL_NAMES = [
   'accX',
@@ -16,8 +21,12 @@ export const MOTION_CHANNEL_COUNT = 6;
 /** ~50 Hz. Stays under Android's 200 Hz sensor cap. */
 export const MOTION_SAMPLE_INTERVAL_MS = 20;
 
-/** Rolling window the model can read. 128 samples ≈ 2.6 s at 50 Hz. */
-export const MOTION_WINDOW_SIZE = 128;
+/**
+ * Ring buffer size. Must hold enough samples to cover the model's 2.6 s
+ * window at 50 Hz with margin:  26 model samples × (50/10) = 130 raw samples.
+ * 150 gives a comfortable margin for irregular sensor delivery.
+ */
+export const MOTION_WINDOW_SIZE = 150;
 
 export type MotionChannels = [number, number, number, number, number, number];
 
@@ -73,8 +82,17 @@ class MotionRingBuffer {
   }
 
   /**
-   * Model input shaped [n, 6].
+   * Timestamp (seconds) of the sample at position i in the current window.
+   * Used by the timestamp-based resampler in useDeadReckoning.
+   */
+  timestampAt(i: number): number {
+    return this.samples[i]?.timestamp ?? 0;
+  }
+
+  /**
+   * Channel values shaped [n, 6].
    * Columns: accX, accY, accZ (g), gyroX, gyroY, gyroZ (rad/s).
+   * Values are in raw Expo sensor units — convert to m/s² at inference time.
    */
   window(): number[][] {
     return this.samples.map((sample) => [...sample.channels]);

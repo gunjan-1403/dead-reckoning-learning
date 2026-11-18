@@ -1,51 +1,131 @@
 /**
  * useDeadReckoning
  *
- * Watches GPS continuously. When a valid fix is available the hook simply
- * forwards the GPS position. When the fix is lost (or degrades below the
- * accuracy threshold) it switches to dead reckoning: the speed CNN estimates
- * the vehicle's current speed from the IMU window, and that speed is
- * integrated with the last-known heading to propagate the position forward.
+ * Watches GPS continuously. When a valid fix is available the hook forwards
+ * the GPS position. When the fix is lost it switches to dead reckoning: the
+ * speed CNN estimates current vehicle speed from the IMU window, and that
+ * speed is integrated with the last-known heading to propagate position.
  *
- * GPS loss is declared after GPS_TIMEOUT_MS of no fresh GPS update.
- * Recovery is instant: the first valid GPS fix snaps the position back.
+ * GPS loss is declared after GPS_TIMEOUT_MS of no fresh fix.
+ * Recovery is instant: the first valid GPS fix snaps position back.
+ *
+ * Unit and axis conventions
+ * ─────────────────────────
+ * The ring buffer stores raw Expo sensor values:
+ *   accelerometer: g  (Expo default)
+ *   gyroscope:     rad/s
+ *
+ * The model was trained on IO-VNBD data where:
+ *   accelerometer: m/s²  → multiply g × 9.81 before inference
+ *   gyroscope channels: yaw (Z), pitch (X), roll (Y) — phone lying flat
+ *     IO-VNBD col 0: yaw   → Expo gyro.z
+ *     IO-VNBD col 1: pitch → Expo gyro.x
+ *     IO-VNBD col 2: roll  → Expo gyro.y
+ *
+ * Resampling
+ * ──────────
+ * App captures at ~50 Hz; model expects ~10 Hz (100 ms bins).
+ * We resample by timestamp: bin the last 2.6 s of raw samples into
+ * 26 non-overlapping 100 ms windows, taking the median of each bin.
+ * This avoids the phase errors introduced by picking every Nth sample.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 
-import { motionBuffer, MOTION_WINDOW_SIZE } from '@/sensors/motionChannels';
+import { motionBuffer } from '@/sensors/motionChannels';
 import { loadSpeedModel, predictSpeed } from '@/inference/speedModel';
 
-// ── Tuneable constants ───────────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────────────────────
 
 /** Declare GPS lost after this many ms without a fresh GPS fix. */
-const GPS_TIMEOUT_MS = 5_000;
+const GPS_TIMEOUT_MS = 10_000;
 
-/** Minimum GPS horizontal accuracy (m) for a fix to be considered valid. */
+/** Minimum GPS horizontal accuracy (m) for a fix to be accepted. */
 const GPS_MIN_ACCURACY_M = 50;
 
 /** How often the DR engine ticks when GPS is lost (ms). */
 const DR_TICK_MS = 1_000;
 
+/** Model window: 26 bins of 100 ms = 2.6 s. */
+const MODEL_BINS    = 26;
+const BIN_WIDTH_MS  = 100;
+const WINDOW_MS     = MODEL_BINS * BIN_WIDTH_MS; // 2600 ms
+
+/** g → m/s² */
+const G_TO_MS2 = 9.80665;
+
+// ── Resampling ────────────────────────────────────────────────────────────────
+
 /**
- * The model was trained at 10 Hz; the app captures at 50 Hz.
- * We sub-sample every Nth sample to get ~10 Hz windows.
- * 50 / 10 = 5 → take every 5th sample.
+ * Resample the raw 50 Hz ring-buffer into 26 bins of 100 ms each.
+ *
+ * Returns null when there is insufficient data (< 2.6 s of history).
+ *
+ * Channel layout coming in (raw Expo units):
+ *   [accX_g, accY_g, accZ_g, gyroX_rads, gyroY_rads, gyroZ_rads]
+ *
+ * Channel layout going out (model units):
+ *   [accX_ms2, accY_ms2, accZ_ms2, gyroYaw_rads, gyroPitch_rads, gyroRoll_rads]
+ *
+ * Gyro remap (phone lying flat, screen up):
+ *   model yaw   ← expo gyro.z  (index 5)
+ *   model pitch ← expo gyro.x  (index 3)
+ *   model roll  ← expo gyro.y  (index 4)
  */
-const SUBSAMPLE_STEP = 5;
+function resampleToModelWindow(
+  rawSamples: { timestamp: number; channels: number[] }[]
+): number[][] | null {
+  if (rawSamples.length === 0) return null;
 
-/** How many raw samples correspond to the model's 26-sample window at 10 Hz. */
-const RAW_WINDOW_NEEDED = 26 * SUBSAMPLE_STEP; // 130 raw samples
+  const now = rawSamples[rawSamples.length - 1].timestamp * 1000; // → ms
+  const windowStart = now - WINDOW_MS;
 
-// ── Coordinate math helpers ──────────────────────────────────────────────────
+  // Filter to the last 2.6 s.
+  const inWindow = rawSamples.filter(s => s.timestamp * 1000 >= windowStart);
+  if (inWindow.length < MODEL_BINS) return null; // need at least one per bin
+
+  const bins: number[][][] = Array.from({ length: MODEL_BINS }, () => []);
+
+  for (const s of inWindow) {
+    const ageMs = now - s.timestamp * 1000;
+    const binIdx = MODEL_BINS - 1 - Math.floor(ageMs / BIN_WIDTH_MS);
+    if (binIdx >= 0 && binIdx < MODEL_BINS) {
+      bins[binIdx].push(s.channels);
+    }
+  }
+
+  // Every bin must have at least one sample.
+  if (bins.some(b => b.length === 0)) return null;
+
+  // Take the median of each bin, then apply unit and axis conversions.
+  return bins.map(bin => {
+    const n = bin.length;
+    const med = (ch: number) => {
+      const sorted = bin.map(row => row[ch]).sort((a, b) => a - b);
+      return n % 2 === 1
+        ? sorted[Math.floor(n / 2)]
+        : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
+    };
+
+    // Accelerometer: g → m/s²
+    const accX = med(0) * G_TO_MS2;
+    const accY = med(1) * G_TO_MS2;
+    const accZ = med(2) * G_TO_MS2;
+
+    // Gyroscope: remap expo X/Y/Z → model yaw/pitch/roll
+    const gyroYaw   = med(5); // expo Z → yaw
+    const gyroPitch = med(3); // expo X → pitch
+    const gyroRoll  = med(4); // expo Y → roll
+
+    return [accX, accY, accZ, gyroYaw, gyroPitch, gyroRoll];
+  });
+}
+
+// ── Coordinate math ──────────────────────────────────────────────────────────
 
 const DEG_TO_RAD = Math.PI / 180;
 const EARTH_RADIUS_M = 6_371_000;
 
-/**
- * Move a coordinate by `distanceMeters` in direction `headingDeg` (0 = north).
- * Uses the flat-earth approximation which is accurate to <1 m over 1 km.
- */
 function moveCoord(
   lat: number,
   lon: number,
@@ -76,11 +156,15 @@ export interface DeadReckoningState {
   estimatedSpeedKmh: number | null;
   /** Model uncertainty (1-sigma, km/h). null when GPS is active. */
   speedSigmaKmh: number | null;
-  /** Cumulative dead reckoning drift in meters since last GPS fix. */
-  drDriftMeters: number;
+  /**
+   * Distance travelled since last GPS fix (metres).
+   * This is path length, not measured position error — actual position
+   * error depends on heading accuracy and model error.
+   */
+  distanceTravelledM: number;
   /** Whether the speed model is loaded and ready. */
   modelReady: boolean;
-  /** True when sensors/model have an error message. */
+  /** Error message, or null. */
   error: string | null;
 }
 
@@ -92,22 +176,21 @@ export function useDeadReckoning(): DeadReckoningState {
     source: 'none',
     estimatedSpeedKmh: null,
     speedSigmaKmh: null,
-    drDriftMeters: 0,
+    distanceTravelledM: 0,
     modelReady: false,
     error: null,
   });
 
-  // Mutable refs — updated from both GPS callbacks and the DR timer.
-  const lastGpsTimeRef = useRef<number>(0);
-  const lastGpsCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
-  const lastHeadingRef = useRef<number>(0); // degrees, 0 = north
-  const drCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
-  const drDriftRef = useRef<number>(0);
-  const drActiveRef = useRef<boolean>(false);
-  const drTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const modelReadyRef = useRef<boolean>(false);
+  const lastGpsTimeRef    = useRef<number>(0);
+  const lastGpsCoordsRef  = useRef<{ latitude: number; longitude: number } | null>(null);
+  const lastHeadingRef    = useRef<number>(0);
+  const drCoordsRef       = useRef<{ latitude: number; longitude: number } | null>(null);
+  const distTravelledRef  = useRef<number>(0);
+  const drActiveRef       = useRef<boolean>(false);
+  const drTimerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const modelReadyRef     = useRef<boolean>(false);
 
-  // ── Load model on mount ──────────────────────────────────────────────────
+  // ── Load model ───────────────────────────────────────────────────────────
   useEffect(() => {
     loadSpeedModel()
       .then(() => {
@@ -120,38 +203,32 @@ export function useDeadReckoning(): DeadReckoningState {
       });
   }, []);
 
-  // ── Dead reckoning tick ──────────────────────────────────────────────────
+  // ── DR tick ──────────────────────────────────────────────────────────────
   const runDrTick = useCallback(async () => {
     if (!modelReadyRef.current) return;
 
-    // We need at least RAW_WINDOW_NEEDED samples in the buffer.
-    if (motionBuffer.length < RAW_WINDOW_NEEDED) return;
+    // Build a typed snapshot of the ring buffer for resampling.
+    const raw = motionBuffer.window().map((channels, i) => ({
+      // motionBuffer stores samples; timestamp index mirrors the array position.
+      // We use the actual MotionSample timestamps via the internal accessor.
+      timestamp: motionBuffer.timestampAt(i),
+      channels,
+    }));
 
-    // Sub-sample the ring buffer to ~10 Hz.
-    const rawAll = motionBuffer.window();
-    const subsampled: number[][] = [];
-    // Take the last RAW_WINDOW_NEEDED samples then pick every SUBSAMPLE_STEP-th.
-    const slice = rawAll.slice(rawAll.length - RAW_WINDOW_NEEDED);
-    for (let i = 0; i < slice.length; i += SUBSAMPLE_STEP) {
-      subsampled.push(slice[i]);
-    }
-
-    // Should give exactly 26, but guard anyway.
-    if (subsampled.length < 26) return;
-    const window26 = subsampled.slice(0, 26);
+    const window26 = resampleToModelWindow(raw);
+    if (!window26) return; // not enough data yet
 
     let speedKmh: number;
     let sigmaKmh: number;
     try {
       const pred = await predictSpeed(window26);
-      speedKmh = Math.max(0, pred.speedKmh); // speed can't be negative
+      speedKmh = Math.max(0, pred.speedKmh);
       sigmaKmh = pred.sigmaKmh;
     } catch {
-      return; // inference error — skip this tick, keep last position
+      return;
     }
 
-    // Integrate: distance = speed (m/s) × Δt (s)
-    const speedMs = (speedKmh * 1000) / 3600;
+    const speedMs   = (speedKmh * 1000) / 3600;
     const dtSeconds = DR_TICK_MS / 1000;
     const distMeters = speedMs * dtSeconds;
 
@@ -165,7 +242,7 @@ export function useDeadReckoning(): DeadReckoningState {
       distMeters
     );
     drCoordsRef.current = newCoords;
-    drDriftRef.current += distMeters;
+    distTravelledRef.current += distMeters;
 
     setState(s => ({
       ...s,
@@ -173,19 +250,17 @@ export function useDeadReckoning(): DeadReckoningState {
       source: 'dead_reckoning',
       estimatedSpeedKmh: speedKmh,
       speedSigmaKmh: sigmaKmh,
-      drDriftMeters: drDriftRef.current,
+      distanceTravelledM: distTravelledRef.current,
     }));
   }, []);
 
-  // ── Start / stop DR timer ────────────────────────────────────────────────
+  // ── Start / stop DR ──────────────────────────────────────────────────────
   const startDr = useCallback(() => {
     if (drActiveRef.current) return;
     drActiveRef.current = true;
     drCoordsRef.current = lastGpsCoordsRef.current;
-    drDriftRef.current = 0;
-    drTimerRef.current = setInterval(() => {
-      void runDrTick();
-    }, DR_TICK_MS);
+    distTravelledRef.current = 0;
+    drTimerRef.current = setInterval(() => { void runDrTick(); }, DR_TICK_MS);
   }, [runDrTick]);
 
   const stopDr = useCallback(() => {
@@ -196,7 +271,7 @@ export function useDeadReckoning(): DeadReckoningState {
       drTimerRef.current = null;
     }
     drCoordsRef.current = null;
-    drDriftRef.current = 0;
+    distTravelledRef.current = 0;
   }, []);
 
   // ── GPS watcher ──────────────────────────────────────────────────────────
@@ -213,7 +288,6 @@ export function useDeadReckoning(): DeadReckoningState {
         return;
       }
 
-      // Continuous location watch at highest available accuracy.
       locationSub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.BestForNavigation,
@@ -223,8 +297,6 @@ export function useDeadReckoning(): DeadReckoningState {
         (loc) => {
           if (cancelled) return;
           const { latitude, longitude, accuracy, heading } = loc.coords;
-
-          // Reject low-accuracy fixes.
           if (accuracy !== null && accuracy > GPS_MIN_ACCURACY_M) return;
 
           lastGpsTimeRef.current = Date.now();
@@ -233,10 +305,7 @@ export function useDeadReckoning(): DeadReckoningState {
             lastHeadingRef.current = heading;
           }
 
-          // GPS fix is valid — snap back and stop DR if it was running.
-          if (drActiveRef.current) {
-            stopDr();
-          }
+          if (drActiveRef.current) stopDr();
 
           setState(s => ({
             ...s,
@@ -244,13 +313,12 @@ export function useDeadReckoning(): DeadReckoningState {
             source: 'gps',
             estimatedSpeedKmh: null,
             speedSigmaKmh: null,
-            drDriftMeters: 0,
+            distanceTravelledM: 0,
             error: null,
           }));
         }
       );
 
-      // Poll for GPS timeout: if no fresh fix for GPS_TIMEOUT_MS, start DR.
       gpsTimeoutTimer = setInterval(() => {
         if (cancelled) return;
         const age = Date.now() - lastGpsTimeRef.current;

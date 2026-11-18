@@ -177,7 +177,7 @@ export default function MapScreen() {
           <Marker
             coordinate={currentCoords}
             title="Estimated position"
-            description={`DR drift: ${dr.drDriftMeters.toFixed(0)} m`}
+            description={`${dr.distanceTravelledM.toFixed(0)} m travelled since last fix`}
             anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.drMarkerOuter}>
               <View style={styles.drMarkerInner} />
@@ -191,7 +191,7 @@ export default function MapScreen() {
         source={dr.source}
         estimatedSpeedKmh={dr.estimatedSpeedKmh}
         speedSigmaKmh={dr.speedSigmaKmh}
-        drDriftMeters={dr.drDriftMeters}
+        distanceTravelledM={dr.distanceTravelledM}
         error={dr.error}
         top={60}
       />

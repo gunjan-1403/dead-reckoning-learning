@@ -79,11 +79,28 @@ torch.onnx.export(
 )
 print(f"Exported: {onnx_path}")
 
-# ── Verify ───────────────────────────────────────────────────────────────────
+# ── Verify and inline external data (no sidecar for mobile bundling) ─────────
 import onnx
+from onnx.external_data_helper import convert_model_to_external_data, load_external_data_for_model
+
 model_proto = onnx.load(str(onnx_path))
+
+# If the exporter created a sidecar (.data file), load it and inline it.
+sidecar = onnx_path.with_suffix('.onnx.data')
+if sidecar.exists():
+    load_external_data_for_model(model_proto, str(onnx_path.parent))
+    # Save again with all weights inlined (no size_threshold → everything inline)
+    onnx.save_model(
+        model_proto,
+        str(onnx_path),
+        save_as_external_data=False,
+    )
+    sidecar.unlink()
+    print("Inlined external weights — sidecar removed.")
+    model_proto = onnx.load(str(onnx_path))
+
 onnx.checker.check_model(model_proto)
-print("ONNX model check passed.")
+print(f"ONNX model check passed. File size: {onnx_path.stat().st_size:,} bytes")
 
 # ── Save normalization metadata alongside ────────────────────────────────────
 meta = {

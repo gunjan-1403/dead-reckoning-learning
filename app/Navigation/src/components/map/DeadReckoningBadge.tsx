@@ -1,8 +1,8 @@
 /**
  * DeadReckoningBadge
  *
- * A small overlay badge that shows the current positioning mode.
- * Visible only when in dead reckoning mode or when there is a model error.
+ * Small overlay badge showing the current positioning mode.
+ * Hidden during normal GPS operation.
  */
 import { StyleSheet, Text, View } from 'react-native';
 import { colors } from '@/constants/colors';
@@ -12,7 +12,8 @@ interface Props {
   source: PositionSource;
   estimatedSpeedKmh: number | null;
   speedSigmaKmh: number | null;
-  drDriftMeters: number;
+  /** Path length since last GPS fix (metres). Not the same as position error. */
+  distanceTravelledM: number;
   error: string | null;
   top: number;
 }
@@ -21,13 +22,17 @@ export function DeadReckoningBadge({
   source,
   estimatedSpeedKmh,
   speedSigmaKmh,
-  drDriftMeters,
+  distanceTravelledM,
   error,
   top,
 }: Props) {
   if (source === 'gps' && !error) return null;
 
   const isDr = source === 'dead_reckoning';
+
+  const distLabel = distanceTravelledM < 1000
+    ? `${distanceTravelledM.toFixed(0)} m travelled`
+    : `${(distanceTravelledM / 1000).toFixed(2)} km travelled`;
 
   return (
     <View style={[styles.badge, isDr ? styles.drMode : styles.errorMode, { top }]}>
@@ -42,13 +47,7 @@ export function DeadReckoningBadge({
             {speedSigmaKmh !== null ? ` ±${speedSigmaKmh.toFixed(1)}` : ''}
           </Text>
         )}
-        {isDr && (
-          <Text style={styles.detail}>
-            Drift {drDriftMeters < 1000
-              ? `${drDriftMeters.toFixed(0)} m`
-              : `${(drDriftMeters / 1000).toFixed(2)} km`}
-          </Text>
-        )}
+        {isDr && <Text style={styles.detail}>{distLabel}</Text>}
         {error && <Text style={styles.errorText} numberOfLines={2}>{error}</Text>}
       </View>
     </View>
