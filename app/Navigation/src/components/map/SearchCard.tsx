@@ -41,9 +41,7 @@ export function SearchCard({ hasCurrentLocation }: Props) {
       ]}>
       {showHero ? (
         <View style={styles.titleBlock}>
-          <Text style={styles.heading}>
-            Explore the World.{'\n'}Find Yourself.
-          </Text>
+          <Text style={styles.heading}>Smart Nav</Text>
         </View>
       ) : null}
 
@@ -113,10 +111,9 @@ const styles = StyleSheet.create({
   },
   heading: {
     color: '#1A2E35',
-    fontFamily: 'GreatVibes_400Regular',
-    fontSize: 42,
-    lineHeight: 48,
-    fontWeight: '400',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '700',
     letterSpacing: 0.2,
   },
   card: {
