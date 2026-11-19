@@ -44,9 +44,6 @@ export function SearchCard({ hasCurrentLocation }: Props) {
           <Text style={styles.heading}>
             Explore the World.{'\n'}Find Yourself.
           </Text>
-          <Text style={styles.subheading}>
-            It’s about the stories you bring home
-          </Text>
         </View>
       ) : null}
 
@@ -112,21 +109,15 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   titleBlock: {
-    marginBottom: 20,
+    marginBottom: 18,
   },
   heading: {
     color: '#1A2E35',
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '800',
-    letterSpacing: -0.6,
-  },
-  subheading: {
-    color: '#5F737A',
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: 'GreatVibes_400Regular',
+    fontSize: 42,
+    lineHeight: 48,
     fontWeight: '400',
-    marginTop: 6,
+    letterSpacing: 0.2,
   },
   card: {
     backgroundColor: colors.white,

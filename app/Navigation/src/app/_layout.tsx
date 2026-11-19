@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useFonts, GreatVibes_400Regular } from '@expo-google-fonts/great-vibes';
 import { NavigationProvider } from '@/context/NavigationContext';
 import { colors } from '@/constants/colors';
 import { onboarding } from '@/constants/onboardingTheme';
@@ -13,6 +14,9 @@ export default function RootLayout() {
   const segments = useSegments();
   const [ready, setReady] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(true);
+  const [fontsLoaded] = useFonts({
+    GreatVibes_400Regular,
+  });
 
   // Kick off image warm-up immediately so onboarding cards paint instantly.
   useEffect(() => {
@@ -41,7 +45,7 @@ export default function RootLayout() {
     };
   }, [segments, router]);
 
-  if (!ready) {
+  if (!ready || !fontsLoaded) {
     return (
       <View style={{ flex: 1, backgroundColor: onboarding.gradientTop }} />
     );
