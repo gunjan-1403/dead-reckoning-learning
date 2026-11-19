@@ -1,56 +1,56 @@
-# Welcome to your Expo app 👋
+# NavGo
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+NavGo is the Expo / React Native app in this repository. The ONNX speed model is already bundled; you don't need Python or any of the notebooks to run it. **Expo Go cannot run this app** because it doesn't include `onnxruntime-react-native`.
 
-## Get started
+## Run on your phone
 
-1. Install dependencies
+Install Node.js 22 LTS (22.13 or later). From the repository root on your computer:
 
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **src/app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```sh
+cd app/Navigation
+npm ci
 ```
 
-This command will move the starter code to the **example** directory and create a blank **src/app** directory where you can start developing.
+Keep npm install scripts enabled: `postinstall` patches ONNX Runtime for Android's Gradle build and native autolinking.
 
-### Other setup steps
+### Android: build an APK on GitHub
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+Push your app changes, then open **Actions → Build Android APK** in the GitHub repository. Open the latest successful run for your branch and download the **NavGo-Android-APK** artifact. Unzip it and install `NavGo-arm64.apk` on a 64-bit ARM Android phone. The app includes its JavaScript bundle and does not need Metro. No Expo account is required for this build.
 
-## Learn more
+Once the workflow is on the default branch, you can also use **Run workflow** to build on demand. The APK uses Expo's generated test signing key, not the Expo Build key. If you already installed a differently signed APK with the same package name, Android won't let this APK replace it. Use the original signing key for an in-place update, or back up any local data before uninstalling the old test app.
 
-To learn more about developing your project with Expo, look at the following resources:
+### Android: install an APK from Expo Build
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+If you prefer an Expo-signed build, sign in to a free Expo account and run:
 
-## Join the community
+```sh
+npx eas-cli@latest login
+npx eas-cli@latest build --platform android --profile preview
+```
 
-Join our community of developers creating universal apps.
+On the first build, follow the prompts to link or create an Expo project and generate an Android keystore. When the build finishes, open the build link on your phone and install the APK. Allow installs from that source if Android asks. Open **NavGo** and grant location access. The installed app does not need your computer or a Metro server.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Android: build locally over USB
+
+If you already have the [Android build tools](https://docs.expo.dev/get-started/set-up-your-environment/?platform=android&device=physical&mode=development-build&buildEnv=local), enable **USB debugging**, connect and authorize your phone, then run:
+
+```sh
+npx expo run:android --device
+```
+
+This builds and installs NavGo and starts the Metro server for the debug build.
+
+### iPhone
+
+On a Mac with Xcode and CocoaPods, connect and trust the iPhone, enable [Developer Mode](https://docs.expo.dev/guides/ios-developer-mode/), and run:
+
+```sh
+npx expo run:ios --device
+```
+
+If prompted, choose a unique bundle identifier and configure signing with your team in Xcode. Without a Mac, an [Expo internal iOS build](https://docs.expo.dev/build/internal-distribution/) is an option with a paid Apple Developer membership: register the iPhone with `npx eas-cli@latest device:create`, then build with `npx eas-cli@latest build --platform ios --profile preview`.
+
+## Maps and search
+
+- If the Android basemap is blank, make sure the key under `expo.android.config.googleMaps.apiKey` in `app.json` has **Maps SDK for Android** enabled and authorizes this app's package name and signing certificate SHA-1. Rebuild after changing the key. Cloud and local debug builds can use different signing certificates.
+- For Google Places and Directions, copy `.env.example` to `.env` and set `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` for local builds, or set the same variable in your Expo project's `preview` environment for cloud builds. Without it, the app tries its public search and routing fallbacks. This client-side value is bundled with the app; don't put secrets in it.

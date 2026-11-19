@@ -58,8 +58,7 @@
           "motionPermission": "Allow NavGo to read accelerometer and gyroscope data for motion analysis."
         }
       ],
-      "expo-sharing",
-      "onnxruntime-react-native"
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
