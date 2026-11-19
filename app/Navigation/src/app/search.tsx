@@ -39,7 +39,6 @@ export default function SearchScreen() {
 
   const isOrigin = field === 'origin';
 
-  // Get user location for proximity biasing in searches
   useEffect(() => {
     (async () => {
       try {
@@ -54,13 +53,11 @@ export default function SearchScreen() {
     })();
   }, []);
 
-  // Auto-focus the input
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 350);
     return () => clearTimeout(timer);
   }, []);
 
-  // Debounced search
   const handleSearch = useCallback(
     (text: string) => {
       setQuery(text);
@@ -82,7 +79,6 @@ export default function SearchScreen() {
     [userLoc]
   );
 
-  // Handle selecting a place from predictions
   const handleSelectPlace = async (prediction: PlacePrediction) => {
     Keyboard.dismiss();
     setLoading(true);
@@ -99,7 +95,6 @@ export default function SearchScreen() {
     }
   };
 
-  // Handle "Use current location"
   const handleCurrentLocation = async () => {
     Keyboard.dismiss();
     setLoading(true);
@@ -135,19 +130,20 @@ export default function SearchScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+      <Text style={styles.heading}>
+        {isOrigin ? 'Choose start' : 'Choose destination'}
+      </Text>
+      <Text style={styles.subheading}>
+        Search a place or use your current location.
+      </Text>
+
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Text style={styles.backArrow}>←</Text>
         </Pressable>
         <View style={styles.inputContainer}>
-          <View
-            style={[
-              styles.fieldDot,
-              { backgroundColor: isOrigin ? colors.primary : colors.error },
-            ]}
-          />
+          <Text style={styles.searchIcon}>⌕</Text>
           <TextInput
             ref={inputRef}
             style={styles.input}
@@ -173,7 +169,6 @@ export default function SearchScreen() {
         </View>
       </View>
 
-      {/* Current location option */}
       <Pressable
         style={({ pressed }) => [
           styles.currentLocRow,
@@ -183,15 +178,12 @@ export default function SearchScreen() {
         <View style={styles.currentLocIcon}>
           <Text style={styles.currentLocIconText}>◎</Text>
         </View>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.currentLocTitle}>Use current location</Text>
           <Text style={styles.currentLocSub}>GPS • Your current position</Text>
         </View>
       </Pressable>
 
-      <View style={styles.divider} />
-
-      {/* Loading indicator */}
       {loading && (
         <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color={colors.primary} />
@@ -199,7 +191,6 @@ export default function SearchScreen() {
         </View>
       )}
 
-      {/* Results */}
       <FlatList
         data={predictions}
         keyExtractor={(item) => item.place_id}
@@ -245,27 +236,39 @@ export default function SearchScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgroundSoft,
+    paddingHorizontal: 18,
+  },
+  heading: {
+    color: colors.teal,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginBottom: 6,
+  },
+  subheading: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    marginBottom: 16,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 8,
+    gap: 10,
+    marginBottom: 14,
   },
   backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.surface,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.white,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
   },
   backArrow: {
-    color: colors.text,
+    color: colors.teal,
     fontSize: 20,
     fontWeight: '600',
   },
@@ -273,18 +276,22 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 14,
+    backgroundColor: colors.white,
+    borderRadius: 24,
     paddingHorizontal: 14,
     height: 48,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: 10,
+    gap: 8,
+    shadowColor: colors.teal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
   },
-  fieldDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  searchIcon: {
+    color: colors.textMuted,
+    fontSize: 18,
   },
   input: {
     flex: 1,
@@ -297,14 +304,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     padding: 4,
   },
-
-  /* Current location */
   currentLocRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
     gap: 14,
+    backgroundColor: colors.white,
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 10,
   },
   currentLocIcon: {
     width: 42,
@@ -319,9 +329,9 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   currentLocTitle: {
-    color: colors.text,
+    color: colors.teal,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   currentLocSub: {
     color: colors.textMuted,
@@ -329,44 +339,38 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   rowPressed: {
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: colors.surfaceMint,
   },
-
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginHorizontal: 20,
-  },
-
-  /* Loading */
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingVertical: 12,
   },
   loadingText: {
     color: colors.textSecondary,
     fontSize: 14,
   },
-
-  /* Results */
   listContent: {
     paddingBottom: 40,
+    gap: 8,
   },
   resultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
     gap: 14,
+    backgroundColor: colors.white,
+    borderRadius: 22,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   resultIcon: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    backgroundColor: colors.surfaceElevated,
+    borderRadius: 16,
+    backgroundColor: colors.surfaceMint,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -378,25 +382,23 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   resultMain: {
-    color: colors.text,
+    color: colors.teal,
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   resultSecondary: {
     color: colors.textMuted,
     fontSize: 13,
   },
-
-  /* Empty state */
   emptyContainer: {
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 48,
     gap: 6,
   },
   emptyText: {
     color: colors.textSecondary,
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   emptySubtext: {
     color: colors.textMuted,

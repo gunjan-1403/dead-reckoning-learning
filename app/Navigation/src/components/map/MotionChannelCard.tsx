@@ -2,7 +2,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 
 import { colors } from '@/constants/colors';
 import type { MotionStreamStatus } from '@/hooks/useMotionChannels';
-import { MOTION_CHANNEL_NAMES, type MotionSample } from '@/sensors/motionChannels';
+import { type MotionSample } from '@/sensors/motionChannels';
 import type { SavedMotionCsv } from '@/sensors/saveMotionCsv';
 
 interface Props {
@@ -18,14 +18,8 @@ interface Props {
   bottom: number;
 }
 
-function formatChannel(value: number) {
-  const sign = value >= 0 ? '+' : '';
-  return `${sign}${value.toFixed(3)}`;
-}
-
 export function MotionChannelCard({
   status,
-  latest,
   isRecording,
   recordedCount,
   saving,
@@ -41,42 +35,48 @@ export function MotionChannelCard({
     : status === 'live'
       ? 'live'
       : status === 'starting'
-        ? 'Starting sensors…'
+        ? '…'
         : status === 'denied'
-          ? 'Motion permission denied'
-          : 'Sensors unavailable';
+          ? 'off'
+          : 'n/a';
 
   return (
     <View style={[styles.card, { bottom }]}>
       <View style={styles.header}>
         <Text style={styles.title}>IMU</Text>
-        <Text style={[styles.status, isRecording && styles.recording]}>{statusLabel}</Text>
+        <Text style={[styles.status, isRecording && styles.recording]}>
+          {statusLabel}
+        </Text>
       </View>
-      <View style={styles.grid}>
-        {MOTION_CHANNEL_NAMES.map((name, index) => (
-          <Text key={name} style={styles.channel}>
-            {name} {latest ? formatChannel(latest.channels[index]) : '—'}
-          </Text>
-        ))}
-      </View>
+
       <Pressable
-        style={[styles.button, isRecording && styles.buttonStop, (!sensorsLive || saving) && styles.buttonDisabled]}
+        style={[
+          styles.button,
+          isRecording && styles.buttonStop,
+          (!sensorsLive || saving) && styles.buttonDisabled,
+        ]}
         disabled={!sensorsLive || saving}
         onPress={isRecording ? onStop : onStart}>
         {saving ? (
-          <ActivityIndicator size="small" color={colors.black} />
+          <ActivityIndicator size="small" color={colors.white} />
         ) : (
-          <Text style={[styles.buttonText, isRecording && styles.buttonStopText]}>
-            {isRecording ? 'Stop & save CSV' : 'Record CSV'}
+          <Text
+            style={[styles.buttonText, isRecording && styles.buttonStopText]}>
+            {isRecording ? 'Stop' : 'Rec'}
           </Text>
         )}
       </Pressable>
+
       {lastSaved ? (
-        <Text style={styles.saved} numberOfLines={2}>
-          Saved {lastSaved.filename} ({lastSaved.rowCount} rows)
+        <Text style={styles.saved} numberOfLines={1}>
+          Saved
         </Text>
       ) : null}
-      {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
+      {saveError ? (
+        <Text style={styles.error} numberOfLines={1}>
+          Err
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -84,48 +84,45 @@ export function MotionChannelCard({
 const styles = StyleSheet.create({
   card: {
     position: 'absolute',
-    left: 16,
-    width: 188,
-    backgroundColor: 'rgba(13,13,13,0.92)',
-    borderRadius: 14,
+    left: 12,
+    width: 72,
+    backgroundColor: colors.white,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    gap: 6,
     zIndex: 12,
+    shadowColor: colors.teal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    gap: 1,
   },
   title: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
+    color: colors.teal,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   status: {
     color: colors.textMuted,
-    fontSize: 10,
+    fontSize: 9,
+    fontWeight: '600',
   },
   recording: {
     color: colors.error,
     fontWeight: '700',
   },
-  grid: {
-    gap: 2,
-  },
-  channel: {
-    color: colors.text,
-    fontSize: 11,
-    fontVariant: ['tabular-nums'],
-  },
   button: {
     backgroundColor: colors.primary,
-    borderRadius: 10,
-    paddingVertical: 8,
+    borderRadius: 12,
+    paddingVertical: 7,
     alignItems: 'center',
   },
   buttonStop: {
@@ -135,19 +132,21 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
   buttonText: {
-    color: colors.black,
-    fontSize: 12,
+    color: colors.textOnPrimary,
+    fontSize: 11,
     fontWeight: '700',
   },
   buttonStopText: {
     color: colors.white,
   },
   saved: {
-    color: colors.primaryLight,
-    fontSize: 10,
+    color: colors.success,
+    fontSize: 9,
+    textAlign: 'center',
   },
   error: {
     color: colors.error,
-    fontSize: 10,
+    fontSize: 9,
+    textAlign: 'center',
   },
 });

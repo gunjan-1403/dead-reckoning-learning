@@ -1,6 +1,15 @@
-import { useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text, Platform } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  Text,
+  Platform,
+  Pressable,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
+import * as Location from 'expo-location';
 
 import { useNavContext } from '@/context/NavigationContext';
 import { getDirections } from '@/utils/api';
@@ -11,8 +20,12 @@ import { MotionChannelCard } from '@/components/map/MotionChannelCard';
 import { DeadReckoningBadge } from '@/components/map/DeadReckoningBadge';
 import { useMotionChannels } from '@/hooks/useMotionChannels';
 import { useDeadReckoning } from '@/hooks/useDeadReckoning';
-import { darkMapStyle } from '@/constants/mapStyle';
+import { lightMapStyle } from '@/constants/mapStyle';
 import { colors } from '@/constants/colors';
+import {
+  formatDistance,
+  remainingRoute,
+} from '@/utils/routeProgress';
 
 const DEFAULT_REGION: Region = {
   latitude: 28.6139,
@@ -21,24 +34,30 @@ const DEFAULT_REGION: Region = {
   longitudeDelta: 0.08,
 };
 
+const ARRIVAL_THRESHOLD_M = 35;
+
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
+  const insets = useSafeAreaInsets();
   const motion = useMotionChannels();
+  const [heading, setHeading] = useState(0);
 
-  // Dead reckoning provides a continuously updated position: GPS when
-  // available, model-estimated coordinates when the GPS signal is lost.
   const dr = useDeadReckoning();
   const currentCoords = dr.coords;
-  const permDenied = dr.source === 'none' && !!dr.error?.includes('permission');
+  const permDenied =
+    dr.source === 'none' && !!dr.error?.includes('permission');
 
   const {
     origin,
     destination,
     route,
     isLoading,
+    isNavigating,
     setOrigin,
     setRoute,
     setIsLoading,
+    stopNavigation,
+    clearRoute,
   } = useNavContext();
 
   /* ── Fetch directions when both endpoints are set ── */
@@ -53,19 +72,14 @@ export default function MapScreen() {
       setRoute(info);
       setIsLoading(false);
 
-      // Fit map to the route
-      if (info && mapRef.current) {
-        mapRef.current.fitToCoordinates(
-          [
-            { latitude: origin.latitude, longitude: origin.longitude },
-            { latitude: destination.latitude, longitude: destination.longitude },
-            ...info.polylineCoords,
-          ],
-          {
-            edgePadding: { top: 220, right: 60, bottom: 280, left: 60 },
+      if (info?.polylineCoords?.length && mapRef.current) {
+        // Give the map a tick so Polyline mounts before we zoom.
+        requestAnimationFrame(() => {
+          mapRef.current?.fitToCoordinates(info.polylineCoords, {
+            edgePadding: { top: 56, right: 36, bottom: 420, left: 36 },
             animated: true,
-          }
-        );
+          });
+        });
       }
     })();
 
@@ -74,7 +88,7 @@ export default function MapScreen() {
     };
   }, [origin, destination, setIsLoading, setRoute]);
 
-  /* ── Auto-set origin once we have coordinates and a destination ── */
+  /* ── Auto-set origin from GPS when destination is chosen ── */
   useEffect(() => {
     if (currentCoords && !origin && destination) {
       setOrigin({
@@ -84,6 +98,80 @@ export default function MapScreen() {
       });
     }
   }, [currentCoords, destination, origin, setOrigin]);
+
+  /* ── Compass heading while navigating ── */
+  useEffect(() => {
+    if (!isNavigating) return;
+    let sub: Location.LocationSubscription | null = null;
+    (async () => {
+      try {
+        sub = await Location.watchHeadingAsync((h) => {
+          const value =
+            h.trueHeading >= 0 ? h.trueHeading : h.magHeading;
+          if (Number.isFinite(value)) setHeading(value);
+        });
+      } catch {
+        // Heading is optional — camera still follows position.
+      }
+    })();
+    return () => {
+      sub?.remove();
+    };
+  }, [isNavigating]);
+
+  /* ── Live progress along the route ── */
+  const progress = useMemo(() => {
+    if (!route || !currentCoords || route.polylineCoords.length < 2) {
+      return null;
+    }
+    const rem = remainingRoute(route.polylineCoords, currentCoords);
+    const ratio =
+      route.distanceMeters > 0
+        ? Math.min(1, Math.max(0, rem.meters / route.distanceMeters))
+        : 1;
+    const remainingSeconds = route.durationSeconds * ratio;
+    const nextStep =
+      route.steps.find((step) => {
+        const idx = remainingRoute(route.polylineCoords, step.location).index;
+        return idx >= rem.index;
+      }) ?? route.steps[0];
+
+    const traveledMeters = Math.max(0, route.distanceMeters - rem.meters);
+    return {
+      remainingCoords: rem.coords,
+      remainingMeters: rem.meters,
+      remainingSeconds,
+      nextInstruction: nextStep?.instruction ?? null,
+      // Require some progress so we don't "arrive" while still at the start.
+      arrived: rem.meters < ARRIVAL_THRESHOLD_M && traveledMeters > 40,
+    };
+  }, [route, currentCoords]);
+
+  /* ── Camera follow in navigation mode ── */
+  useEffect(() => {
+    if (!isNavigating || !currentCoords || !mapRef.current) return;
+    mapRef.current.animateCamera(
+      {
+        center: currentCoords,
+        heading,
+        pitch: 55,
+        zoom: 18,
+      },
+      { duration: 600 }
+    );
+  }, [
+    isNavigating,
+    currentCoords?.latitude,
+    currentCoords?.longitude,
+    heading,
+  ]);
+
+  /* ── Arrival ── */
+  useEffect(() => {
+    if (isNavigating && progress?.arrived) {
+      stopNavigation();
+    }
+  }, [isNavigating, progress?.arrived, stopNavigation]);
 
   const goToCurrentLocation = () => {
     if (currentCoords && mapRef.current) {
@@ -98,7 +186,22 @@ export default function MapScreen() {
     ? { ...currentCoords, latitudeDelta: 0.05, longitudeDelta: 0.05 }
     : DEFAULT_REGION;
 
-  /* ── Loading state: show spinner until we have any position (GPS or DR) ── */
+  const previewCoords = route?.polylineCoords ?? [];
+  const traveledCoords =
+    isNavigating && route && progress
+      ? route.polylineCoords.slice(
+          0,
+          Math.max(
+            1,
+            route.polylineCoords.length - progress.remainingCoords.length + 1
+          )
+        )
+      : [];
+  const activeCoords =
+    isNavigating && progress?.remainingCoords?.length
+      ? progress.remainingCoords
+      : previewCoords;
+
   if (dr.source === 'none' && !dr.error) {
     return (
       <View style={styles.loadingScreen}>
@@ -111,32 +214,32 @@ export default function MapScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Map */}
       <MapView
         ref={mapRef}
         style={styles.map}
         initialRegion={initialRegion}
         showsUserLocation={!permDenied && dr.source === 'gps'}
         showsMyLocationButton={false}
-        showsCompass={false}
-        customMapStyle={Platform.OS === 'android' ? darkMapStyle : undefined}
-        userInterfaceStyle="dark">
-        {/* Origin marker */}
-        {origin && (
+        showsCompass={!isNavigating}
+        rotateEnabled
+        pitchEnabled
+        customMapStyle={Platform.OS === 'android' ? lightMapStyle : undefined}
+        userInterfaceStyle="light">
+        {origin && !isNavigating && (
           <Marker
             coordinate={{
               latitude: origin.latitude,
               longitude: origin.longitude,
             }}
             title="Start"
-            description={origin.address}>
+            description={origin.address}
+            tracksViewChanges={false}>
             <View style={styles.originMarkerOuter}>
               <View style={styles.originMarkerInner} />
             </View>
           </Marker>
         )}
 
-        {/* Destination marker */}
         {destination && (
           <Marker
             coordinate={{
@@ -144,7 +247,8 @@ export default function MapScreen() {
               longitude: destination.longitude,
             }}
             title="Destination"
-            description={destination.address}>
+            description={destination.address}
+            tracksViewChanges={false}>
             <View style={styles.destMarkerContainer}>
               <View style={styles.destMarkerPin}>
                 <Text style={styles.destMarkerText}>B</Text>
@@ -155,30 +259,44 @@ export default function MapScreen() {
           </Marker>
         )}
 
-        {/* Route polyline */}
-        {route && (
+        {/* Dim traveled portion while navigating */}
+        {isNavigating && traveledCoords.length >= 2 && (
+          <Polyline
+            coordinates={traveledCoords}
+            strokeColor={colors.routeTraveled}
+            strokeWidth={6}
+            lineCap="round"
+            lineJoin="round"
+          />
+        )}
+
+        {/* Active / preview route */}
+        {activeCoords.length >= 2 && (
           <>
             <Polyline
-              coordinates={route.polylineCoords}
-              strokeColor="rgba(0,230,118,0.3)"
-              strokeWidth={8}
+              coordinates={activeCoords}
+              strokeColor={colors.routeSoft}
+              strokeWidth={10}
+              lineCap="round"
+              lineJoin="round"
             />
             <Polyline
-              coordinates={route.polylineCoords}
-              strokeColor={colors.primary}
+              coordinates={activeCoords}
+              strokeColor={colors.route}
               strokeWidth={5}
+              lineCap="round"
+              lineJoin="round"
             />
           </>
         )}
 
-        {/* Dead reckoning position marker — shown instead of the native blue dot
-            when GPS is lost so the user can see the estimated position. */}
         {dr.source === 'dead_reckoning' && currentCoords && (
           <Marker
             coordinate={currentCoords}
             title="Estimated position"
             description={`${dr.distanceTravelledM.toFixed(0)} m travelled since last fix`}
-            anchor={{ x: 0.5, y: 0.5 }}>
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={false}>
             <View style={styles.drMarkerOuter}>
               <View style={styles.drMarkerInner} />
             </View>
@@ -186,23 +304,35 @@ export default function MapScreen() {
         )}
       </MapView>
 
-      {/* Dead reckoning status badge */}
-      <DeadReckoningBadge
-        source={dr.source}
-        estimatedSpeedKmh={dr.estimatedSpeedKmh}
-        speedSigmaKmh={dr.speedSigmaKmh}
-        distanceTravelledM={dr.distanceTravelledM}
-        error={dr.error}
-        top={60}
-      />
+      {!isNavigating && !route && (
+        <DeadReckoningBadge
+          source={dr.source}
+          estimatedSpeedKmh={dr.estimatedSpeedKmh}
+          speedSigmaKmh={dr.speedSigmaKmh}
+          distanceTravelledM={dr.distanceTravelledM}
+          error={dr.error}
+          top={238}
+        />
+      )}
 
-      {/* Search overlay */}
-      <SearchCard hasCurrentLocation={!!currentCoords} />
+      {/* Hide From/To header on the trip-detail screen */}
+      {!isNavigating && !route && (
+        <SearchCard hasCurrentLocation={!!currentCoords} />
+      )}
 
-      {/* Current location FAB */}
-      {!route && <CurrentLocationButton onPress={goToCurrentLocation} />}
+      {/* Back to search when viewing the trip detail sheet */}
+      {route && !isNavigating && (
+        <Pressable
+          style={[styles.backFab, { top: insets.top + 10 }]}
+          onPress={clearRoute}>
+          <Text style={styles.backFabText}>←</Text>
+        </Pressable>
+      )}
 
-      {/* Loading overlay */}
+      {!route && !isNavigating && (
+        <CurrentLocationButton onPress={goToCurrentLocation} />
+      )}
+
       {isLoading && (
         <View style={styles.loadingOverlay}>
           <View style={styles.loadingCard}>
@@ -212,24 +342,44 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Live 6-channel accelerometer + gyroscope stream */}
-      <MotionChannelCard
-        status={motion.status}
-        latest={motion.latest}
-        isRecording={motion.isRecording}
-        recordedCount={motion.recordedCount}
-        saving={motion.saving}
-        lastSaved={motion.lastSaved}
-        saveError={motion.saveError}
-        onStart={motion.startRecording}
-        onStop={() => {
-          void motion.stopAndSave();
-        }}
-        bottom={route ? 310 : 28}
+      {/* Compact IMU only on home / before a route is chosen */}
+      {!isNavigating && !route && (
+        <MotionChannelCard
+          status={motion.status}
+          latest={motion.latest}
+          isRecording={motion.isRecording}
+          recordedCount={motion.recordedCount}
+          saving={motion.saving}
+          lastSaved={motion.lastSaved}
+          saveError={motion.saveError}
+          onStart={motion.startRecording}
+          onStop={() => {
+            void motion.stopAndSave();
+          }}
+          bottom={24}
+        />
+      )}
+
+      <RouteInfoPanel
+        remainingMeters={progress?.remainingMeters ?? null}
+        remainingSeconds={progress?.remainingSeconds ?? null}
+        nextInstruction={
+          isNavigating
+            ? progress?.nextInstruction ??
+              (destination
+                ? `Head to ${destination.address}`
+                : 'Follow the route')
+            : null
+        }
       />
 
-      {/* Route info bottom panel */}
-      <RouteInfoPanel />
+      {isNavigating && progress && (
+        <View style={styles.navChip}>
+          <Text style={styles.navChipText}>
+            {formatDistance(progress.remainingMeters)} left
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -240,10 +390,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   map: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
 
-  /* Loading screen */
   loadingScreen: {
     flex: 1,
     backgroundColor: colors.background,
@@ -252,20 +405,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   loadingTitle: {
-    color: colors.primary,
+    color: colors.teal,
     fontSize: 32,
     fontWeight: '800',
     letterSpacing: 1,
     marginTop: 20,
   },
   loadingSubtitle: {
-    color: colors.textMuted,
+    color: colors.textSecondary,
     fontSize: 15,
   },
 
-  /* Loading overlay */
   loadingOverlay: {
-    ...StyleSheet.absoluteFill,
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 20,
@@ -274,30 +430,73 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.white,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 28,
     borderWidth: 1,
     borderColor: colors.border,
-    shadowColor: '#000',
+    shadowColor: colors.teal,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
     elevation: 8,
   },
   loadingRouteText: {
-    color: colors.text,
+    color: colors.teal,
     fontSize: 15,
-    fontWeight: '500',
+    fontWeight: '600',
   },
 
-  /* Dead reckoning marker (orange pulsing dot — shown when GPS is lost) */
+  navChip: {
+    position: 'absolute',
+    top: 54,
+    alignSelf: 'center',
+    backgroundColor: colors.white,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    zIndex: 12,
+    shadowColor: colors.teal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  navChipText: {
+    color: colors.teal,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  backFab: {
+    position: 'absolute',
+    left: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 25,
+    shadowColor: colors.teal,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  backFabText: {
+    color: colors.teal,
+    fontSize: 20,
+    fontWeight: '700',
+  },
+
   drMarkerOuter: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,149,0,0.25)',
+    backgroundColor: colors.primaryGlow,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -305,22 +504,16 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: '#FF9500',
+    backgroundColor: colors.primary,
     borderWidth: 2.5,
     borderColor: colors.white,
-    shadowColor: '#FF9500',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-    elevation: 6,
   },
 
-  /* Origin marker (green pulsing dot) */
   originMarkerOuter: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: 'rgba(0,230,118,0.25)',
+    backgroundColor: 'rgba(43,182,115,0.22)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -328,17 +521,11 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: colors.primary,
+    backgroundColor: colors.originDot,
     borderWidth: 2.5,
     borderColor: colors.white,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-    elevation: 6,
   },
 
-  /* Destination marker (pin) */
   destMarkerContainer: {
     alignItems: 'center',
   },
@@ -346,16 +533,11 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.error,
+    backgroundColor: colors.destDot,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2.5,
     borderColor: colors.white,
-    shadowColor: colors.error,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 6,
   },
   destMarkerText: {
     color: colors.white,

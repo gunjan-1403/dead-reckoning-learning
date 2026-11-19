@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "navigation",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon",
       "config": {
@@ -41,7 +41,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0D0D0D",
+          "backgroundColor": "#E8F4F2",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
@@ -58,7 +58,8 @@
           "motionPermission": "Allow NavGo to read accelerometer and gyroscope data for motion analysis."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      "onnxruntime-react-native"
     ],
     "experiments": {
       "typedRoutes": true,

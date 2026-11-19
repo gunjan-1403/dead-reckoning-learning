@@ -1,8 +1,61 @@
 import * as Location from 'expo-location';
 import { decodePolyline } from './polyline';
-import type { LocationPoint, RouteInfo } from '../context/NavigationContext';
+import { haversineMeters } from './routeProgress';
+import type {
+  LocationPoint,
+  RouteInfo,
+  RouteStep,
+} from '../context/NavigationContext';
 
 const getApiKey = () => process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+
+function formatDuration(seconds: number): string {
+  const mins = Math.max(1, Math.round(seconds / 60));
+  if (mins >= 60) {
+    return `${Math.floor(mins / 60)} hr ${mins % 60} min`;
+  }
+  return `${mins} min`;
+}
+
+function ensurePolyline(
+  coords: { latitude: number; longitude: number }[],
+  origin: LocationPoint,
+  destination: LocationPoint
+): { latitude: number; longitude: number }[] {
+  if (coords.length >= 2) return coords;
+  return [
+    { latitude: origin.latitude, longitude: origin.longitude },
+    { latitude: destination.latitude, longitude: destination.longitude },
+  ];
+}
+
+function buildRouteInfo(
+  origin: LocationPoint,
+  destination: LocationPoint,
+  distanceMeters: number,
+  durationSeconds: number,
+  encodedOrCoords: string | { latitude: number; longitude: number }[],
+  steps: RouteStep[] = []
+): RouteInfo {
+  const decoded =
+    typeof encodedOrCoords === 'string'
+      ? decodePolyline(encodedOrCoords)
+      : encodedOrCoords;
+  const polylineCoords = ensurePolyline(decoded, origin, destination);
+  const distKm = distanceMeters / 1000;
+
+  return {
+    distance:
+      distKm >= 1
+        ? `${distKm.toFixed(1)} km`
+        : `${Math.round(distanceMeters)} m`,
+    duration: formatDuration(durationSeconds),
+    distanceMeters,
+    durationSeconds,
+    polylineCoords,
+    steps,
+  };
+}
 
 /* ── Place Autocomplete ── */
 
@@ -320,7 +373,7 @@ export async function getDirections(
             'Content-Type': 'application/json',
             'X-Goog-Api-Key': apiKey,
             'X-Goog-FieldMask':
-              'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+              'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.steps.navigationInstruction,routes.legs.steps.localizedValues,routes.legs.steps.endLocation',
           },
           body: JSON.stringify({
             origin: {
@@ -349,23 +402,50 @@ export async function getDirections(
         const data = await res.json();
         if (data.routes && data.routes.length > 0) {
           const r = data.routes[0];
-          const distKm = (r.distanceMeters / 1000).toFixed(1);
           const durSeconds =
-            parseInt(r.duration?.replace('s', '') || '0', 10) || 0;
-          const durMins = Math.round(durSeconds / 60);
-          const durText =
-            durMins >= 60
-              ? `${Math.floor(durMins / 60)} hr ${durMins % 60} min`
-              : `${durMins} min`;
+            parseInt(String(r.duration ?? '0').replace('s', ''), 10) || 0;
+          const steps: RouteStep[] = [];
+          for (const leg of r.legs ?? []) {
+            for (const step of leg.steps ?? []) {
+              const instruction =
+                step.navigationInstruction?.instructions ||
+                step.navigationInstruction?.text ||
+                'Continue';
+              const lat =
+                step.endLocation?.latLng?.latitude ??
+                step.endLocation?.latitude;
+              const lng =
+                step.endLocation?.latLng?.longitude ??
+                step.endLocation?.longitude;
+              if (lat == null || lng == null) continue;
+              steps.push({
+                instruction,
+                distanceMeters:
+                  parseInt(
+                    String(
+                      step.localizedValues?.distance?.meters ??
+                        step.distanceMeters ??
+                        0
+                    ),
+                    10
+                  ) || 0,
+                location: { latitude: lat, longitude: lng },
+              });
+            }
+          }
 
-          return {
-            distance: `${distKm} km`,
-            duration: durText,
-            polylineCoords: decodePolyline(
-              r.polyline?.encodedPolyline || ''
-            ),
-          };
+          return buildRouteInfo(
+            origin,
+            destination,
+            r.distanceMeters || 0,
+            durSeconds,
+            r.polyline?.encodedPolyline || '',
+            steps
+          );
         }
+      } else {
+        const errBody = await res.text();
+        console.warn('[Directions - Routes API] HTTP', res.status, errBody);
       }
     } catch (err) {
       console.warn('[Directions - Routes API] Fetch failed:', err);
@@ -379,51 +459,86 @@ export async function getDirections(
         `https://maps.googleapis.com/maps/api/directions/json` +
         `?origin=${origin.latitude},${origin.longitude}` +
         `&destination=${destination.latitude},${destination.longitude}` +
-        `&key=${apiKey}`;
+        `&mode=driving&key=${apiKey}`;
       const res = await fetch(url);
       const data = await res.json();
 
       if (data.status === 'OK' && data.routes?.length > 0) {
         const route = data.routes[0];
         const leg = route.legs[0];
-        return {
-          distance: leg.distance.text,
-          duration: leg.duration.text,
-          polylineCoords: decodePolyline(
-            route.overview_polyline.points
+        const steps: RouteStep[] = (leg.steps ?? []).map((step: any) => ({
+          instruction: String(step.html_instructions ?? 'Continue').replace(
+            /<[^>]+>/g,
+            ' '
           ),
-        };
+          distanceMeters: step.distance?.value ?? 0,
+          location: {
+            latitude: step.end_location.lat,
+            longitude: step.end_location.lng,
+          },
+        }));
+
+        return buildRouteInfo(
+          origin,
+          destination,
+          leg.distance?.value ?? 0,
+          leg.duration?.value ?? 0,
+          route.overview_polyline.points,
+          steps
+        );
       }
+
+      console.warn('[Directions - Legacy] status:', data.status, data.error_message);
     } catch (err) {
       console.warn('[Directions - Legacy] Fetch failed:', err);
     }
   }
 
-  // 3. Robust High-Performance Fallback: OSRM (Turn-by-turn routing with encoded polyline)
+  // 3. OSRM fallback (road geometry + steps, no API key)
   try {
-    const osrmUrl = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=polyline`;
-    console.log('[Directions - OSRM] Fetching fallback route...');
+    const osrmUrl =
+      `https://router.project-osrm.org/route/v1/driving/` +
+      `${origin.longitude},${origin.latitude};` +
+      `${destination.longitude},${destination.latitude}` +
+      `?overview=full&geometries=polyline&steps=true`;
+    console.log('[Directions - OSRM] Fetching route...');
     const res = await fetch(osrmUrl);
     const data = await res.json();
 
     if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
       const route = data.routes[0];
-      const distKm = (route.distance / 1000).toFixed(1);
-      const durMins = Math.round(route.duration / 60);
-      const durText =
-        durMins >= 60
-          ? `${Math.floor(durMins / 60)} hr ${durMins % 60} min`
-          : `${durMins} min`;
+      const steps: RouteStep[] = [];
+      for (const leg of route.legs ?? []) {
+        for (const step of leg.steps ?? []) {
+          const [lng, lat] = step.maneuver?.location ?? [];
+          if (lat == null || lng == null) continue;
+          const type = step.maneuver?.modifier
+            ? `${step.maneuver.type} ${step.maneuver.modifier}`
+            : step.maneuver?.type || 'continue';
+          const road = step.name ? ` onto ${step.name}` : '';
+          steps.push({
+            instruction: `${type.replace(/_/g, ' ')}${road}`.trim(),
+            distanceMeters: step.distance ?? 0,
+            location: { latitude: lat, longitude: lng },
+          });
+        }
+      }
 
-      return {
-        distance: `${distKm} km`,
-        duration: durText,
-        polylineCoords: decodePolyline(route.geometry),
-      };
+      return buildRouteInfo(
+        origin,
+        destination,
+        route.distance || 0,
+        route.duration || 0,
+        route.geometry || '',
+        steps
+      );
     }
   } catch (err) {
     console.warn('[Directions - OSRM] Fetch failed:', err);
   }
 
-  return null;
+  // Last resort: straight line so the map still shows a path
+  const meters = haversineMeters(origin, destination);
+  const seconds = meters / 13.9; // ~50 km/h estimate
+  return buildRouteInfo(origin, destination, meters, seconds, []);
 }

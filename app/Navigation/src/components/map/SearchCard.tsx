@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@/constants/colors';
 import { useNavContext } from '@/context/NavigationContext';
 
@@ -8,8 +9,16 @@ interface Props {
 }
 
 export function SearchCard({ hasCurrentLocation }: Props) {
-  const { origin, destination, route, clearRoute, setOrigin, setDestination, setRoute } =
-    useNavContext();
+  const insets = useSafeAreaInsets();
+  const {
+    origin,
+    destination,
+    route,
+    clearRoute,
+    setOrigin,
+    setDestination,
+    setRoute,
+  } = useNavContext();
 
   const handleSwap = () => {
     if (origin || destination) {
@@ -21,52 +30,68 @@ export function SearchCard({ hasCurrentLocation }: Props) {
     }
   };
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        {/* Origin field */}
-        <Pressable
-          style={styles.inputRow}
-          onPress={() => router.push('/search?field=origin')}>
-          <View style={[styles.dot, styles.dotGreen]} />
-          <Text
-            style={[styles.inputText, !origin && styles.placeholderText]}
-            numberOfLines={1}>
-            {origin?.address ??
-              (hasCurrentLocation ? 'Your location' : 'Choose starting point')}
-          </Text>
-        </Pressable>
+  const showHero = !route;
 
-        {/* Divider with swap button */}
-        <View style={styles.dividerRow}>
-          <View style={styles.connectLine}>
-            <View style={styles.lineSegment} />
-          </View>
-          <View style={styles.dividerLine} />
-          <Pressable style={styles.swapBtn} onPress={handleSwap}>
-            <Text style={styles.swapIcon}>⇅</Text>
+  return (
+    <View
+      style={[
+        styles.container,
+        !showHero && styles.containerCompact,
+        { paddingTop: insets.top + (showHero ? 8 : 6) },
+      ]}>
+      {showHero ? (
+        <View style={styles.titleBlock}>
+          <Text style={styles.heading}>
+            Explore the World.{'\n'}Find Yourself.
+          </Text>
+          <Text style={styles.subheading}>
+            It’s about the stories you bring home
+          </Text>
+        </View>
+      ) : null}
+
+      <View style={[styles.card, !showHero && styles.cardCompact]}>
+        <View style={styles.timelineCol}>
+          <View style={[styles.node, styles.nodeStart]} />
+          <View style={styles.timelineLine} />
+          <View style={[styles.node, styles.nodeEnd]} />
+        </View>
+
+        <View style={styles.fields}>
+          <Pressable
+            style={[styles.pill, !showHero && styles.pillCompact]}
+            onPress={() => router.push('/search?field=origin')}>
+            <Text style={styles.pillLabel}>From</Text>
+            <Text
+              style={[styles.pillValue, !origin && styles.placeholder]}
+              numberOfLines={1}>
+              {origin?.address ??
+                (hasCurrentLocation ? 'Your location' : 'Choose starting point')}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.pill, !showHero && styles.pillCompact]}
+            onPress={() => router.push('/search?field=destination')}>
+            <Text style={styles.pillLabel}>To</Text>
+            <Text
+              style={[styles.pillValue, !destination && styles.placeholder]}
+              numberOfLines={1}>
+              {destination?.address ?? 'Where to?'}
+            </Text>
           </Pressable>
         </View>
 
-        {/* Destination field */}
-        <Pressable
-          style={styles.inputRow}
-          onPress={() => router.push('/search?field=destination')}>
-          <View style={[styles.dot, styles.dotRed]} />
-          <Text
-            style={[styles.inputText, !destination && styles.placeholderText]}
-            numberOfLines={1}>
-            {destination?.address ?? 'Where to?'}
-          </Text>
+        <Pressable style={styles.swapBtn} onPress={handleSwap}>
+          <Text style={styles.swapIcon}>⇅</Text>
         </Pressable>
-
-        {/* Clear button when route is active */}
-        {route && (
-          <Pressable style={styles.clearBtn} onPress={clearRoute}>
-            <Text style={styles.clearText}>✕  Clear route</Text>
-          </Pressable>
-        )}
       </View>
+
+      {route ? (
+        <Pressable style={styles.clearBtn} onPress={clearRoute}>
+          <Text style={styles.clearText}>Clear route</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -77,109 +102,138 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    paddingTop: 54,
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
+    paddingBottom: 12,
     zIndex: 10,
+    backgroundColor: '#E8F6F4',
+  },
+  containerCompact: {
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+  },
+  titleBlock: {
+    marginBottom: 20,
+  },
+  heading: {
+    color: '#1A2E35',
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '800',
+    letterSpacing: -0.6,
+  },
+  subheading: {
+    color: '#5F737A',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '400',
+    marginTop: 6,
   },
   card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    backgroundColor: colors.white,
+    borderRadius: 22,
+    paddingVertical: 10,
+    paddingLeft: 12,
+    paddingRight: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: colors.teal,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 4,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  inputRow: {
-    flexDirection: 'row',
+  cardCompact: {
+    borderRadius: 18,
+    paddingVertical: 8,
+  },
+  timelineCol: {
+    width: 14,
     alignItems: 'center',
-    paddingVertical: 14,
-    gap: 14,
+    marginRight: 8,
+    paddingVertical: 6,
   },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  node: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: colors.white,
   },
-  dotGreen: {
-    backgroundColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    elevation: 4,
+  nodeStart: {
+    backgroundColor: colors.originDot,
   },
-  dotRed: {
-    backgroundColor: colors.error,
-    shadowColor: colors.error,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    elevation: 4,
+  nodeEnd: {
+    backgroundColor: colors.destDot,
   },
-  inputText: {
+  timelineLine: {
+    width: 2,
     flex: 1,
+    minHeight: 18,
+    backgroundColor: colors.primary,
+    marginVertical: 3,
+    borderRadius: 1,
+  },
+  fields: {
+    flex: 1,
+    gap: 6,
+  },
+  pill: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  pillCompact: {
+    paddingVertical: 6,
+  },
+  pillLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    marginBottom: 1,
+    textTransform: 'uppercase',
+  },
+  pillValue: {
     color: colors.text,
-    fontSize: 16,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  placeholder: {
+    color: colors.textMuted,
     fontWeight: '500',
   },
-  placeholderText: {
-    color: colors.textMuted,
-    fontWeight: '400',
-  },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingLeft: 5,
-  },
-  connectLine: {
-    width: 2,
-    height: 1,
-  },
-  lineSegment: {
-    position: 'absolute',
-    top: -10,
-    bottom: -10,
-    left: 0,
-    width: 2,
-    backgroundColor: colors.border,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-    marginLeft: 18,
-  },
   swapBtn: {
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceMint,
     alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 16,
-    marginLeft: 8,
+    justifyContent: 'center',
+    marginLeft: 6,
   },
   swapIcon: {
-    color: colors.textSecondary,
-    fontSize: 16,
+    color: colors.teal,
+    fontSize: 15,
     fontWeight: '700',
   },
   clearBtn: {
     alignSelf: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 4,
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: 20,
+    marginTop: 8,
+    backgroundColor: colors.white,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   clearText: {
     color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

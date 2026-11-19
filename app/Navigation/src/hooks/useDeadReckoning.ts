@@ -33,7 +33,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Location from 'expo-location';
 
 import { motionBuffer } from '@/sensors/motionChannels';
-import { loadSpeedModel, predictSpeed } from '@/inference/speedModel';
+import {
+  isOnnxRuntimeAvailable,
+  loadSpeedModel,
+  predictSpeed,
+} from '@/inference/speedModel';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -192,6 +196,16 @@ export function useDeadReckoning(): DeadReckoningState {
 
   // ── Load model ───────────────────────────────────────────────────────────
   useEffect(() => {
+    // Expo Go has no Onnxruntime native module — skip quietly and stay GPS-only.
+    if (!isOnnxRuntimeAvailable()) {
+      if (__DEV__) {
+        console.warn(
+          '[DeadReckoning] onnxruntime-react-native is not linked. GPS-only mode. Use a development build for on-device inference.'
+        );
+      }
+      return;
+    }
+
     loadSpeedModel()
       .then(() => {
         modelReadyRef.current = true;
